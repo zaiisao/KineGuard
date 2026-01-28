@@ -1,0 +1,9 @@
+[submodule "external/mmcv"]
+	path = external/mmcv
+	url = https://github.com/open-mmlab/mmcv.git
+[submodule "external/ViTPose"]
+	path = external/ViTPose
+	url = https://github.com/ViTAE-Transformer/ViTPose.git
+[submodule "external/MotionBERT"]
+	path = external/MotionBERT
+	url = https://github.com/Walter0807/MotionBERT.git
