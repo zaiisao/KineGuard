@@ -2,11 +2,16 @@
 	path = external/mmcv
 	url = https://github.com/open-mmlab/mmcv.git
 	ignore = untracked
-[submodule "external/ViTPose"]
-	path = external/ViTPose
-	url = https://github.com/ViTAE-Transformer/ViTPose.git
-	ignore = untracked
 [submodule "external/MotionBERT"]
 	path = external/MotionBERT
 	url = https://github.com/Walter0807/MotionBERT.git
 	ignore = untracked
+[submodule "external/WHAM"]
+	path = external/WHAM
+	url = https://github.com/yohanshin/WHAM.git
+[submodule "external/dance-style-recognition"]
+	path = external/dance-style-recognition
+	url = https://github.com/zaiisao/dance-style-recognition.git
+[submodule "external/pytorch3d"]
+	path = external/pytorch3d
+	url = https://github.com/facebookresearch/pytorch3d.git
