@@ -1,8 +1,27 @@
+import sys
+import os
 import numpy as np
 np.float = float
 
-import sys
-import os
+# 1. Get Absolute Path to the project root
+# This assumes wham_inference.py is in KineGuard/core/
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, ".."))
+
+# 2. Define external paths clearly
+wham_root = os.path.join(project_root, "external/WHAM")
+dpvo_path = os.path.join(wham_root, "third-party/DPVO")
+lma_path = os.path.join(project_root, "external/dance-style-recognition/src")
+vitpose_path = os.path.join(wham_root, "third-party/ViTPose")
+
+# 3. Insert paths at INDEX 0 (Highest Priority)
+# This forces Python to look in WHAM's folders first
+for p in [wham_root, dpvo_path, lma_path, vitpose_path]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+from lib.models.preproc.slam import SLAMModel
+
 import cv2
 import torch
 import joblib
@@ -24,15 +43,9 @@ from lib.models.preproc.extractor import FeatureExtractor
 from lib.models.smplify import TemporalSMPLify
 from lib.vis.run_vis import run_vis_on_demo
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-lma_path = os.path.abspath(os.path.join(script_dir, "../external/dance-style-recognition/src"))
-sys.path.append(lma_path)
-
 from process_lma_features import compute_lma_descriptor, IdentityFloor
 
 import subprocess
-
-sys.path.append('external/WHAM/third-party/DPVO')
 
 try: 
     from lib.models.preproc.slam import SLAMModel
@@ -42,9 +55,10 @@ except ImportError:
     _run_global = False
 
 class KineGuardWHAMProcessor:
-    def __init__(self, cfg_path='configs/yamls/demo.yaml'):
+    def __init__(self, cfg_path='configs/yamls/demo.yaml', device_id=0):
         print("[*] Initializing KineGuard WHAM Processor...")
         self.cfg = get_cfg_defaults()
+        self.cfg.DEVICE = f'cuda:{device_id}' if torch.cuda.is_available() else 'cpu'
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         wham_root = os.path.join(script_dir, '..', 'external', 'WHAM')
@@ -62,8 +76,8 @@ class KineGuardWHAMProcessor:
         self.network.eval()
         
         # Detector & Extractor (Replaces YOLO & ViTPose)
-        self.detector = DetectionModel(self.cfg.DEVICE.lower())
-        self.extractor = FeatureExtractor(self.cfg.DEVICE.lower(), self.cfg.FLIP_EVAL)
+        self.detector = DetectionModel(self.cfg.DEVICE)
+        self.extractor = FeatureExtractor(self.cfg.DEVICE, self.cfg.FLIP_EVAL)
 
     def preprocess_video(self, video_path, output_pth, calib=None, use_slam=True):
         """Replaces Phase 1: 2D Extraction."""
@@ -225,54 +239,74 @@ class KineGuardWHAMProcessor:
 
         return processed_fragments, fps
 
-# --- MAIN ---
+def process_single_video(video_path, output_root, visualize=False):
+    """
+    Worker function for multiprocessing. 
+    Each process creates its own KineGuardWHAMProcessor instance.
+    """
+
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    video_output_dir = os.path.join(output_root, video_name)
+    
+    # Pass the device_id here
+    processor = KineGuardWHAMProcessor(device_id=0)
+    
+    try:
+        fragments, fps = processor.run_pipeline(video_path, video_output_dir, visualize=visualize)
+        
+        if fragments:
+            print(f"\n[+] WHAM Complete for {video_name}. Starting LMA Integration...")
+            for _id, data in fragments.items():
+                print(f"[*] Extracting LMA features for Fragment {_id}...")
+                
+                joints = data['joints_world'][:, :24, :]
+                verts_array = data['verts_world']
+                
+                # A. Calculate Volumes
+                volumes = []
+                last_v = 0.07 
+                for verts in verts_array:
+                    try:
+                        v = ConvexHull(verts).volume
+                        volumes.append(v)
+                        last_v = v
+                    except Exception:
+                        volumes.append(last_v)
+                
+                floors = [IdentityFloor()] * len(joints)
+                
+                # B. Call LMA logic
+                lma_dict, lma_matrix = compute_lma_descriptor(
+                    joints=joints, 
+                    volumes=volumes, 
+                    floors=floors, 
+                    fps=fps, 
+                    window_size=55
+                )
+                
+                # C. Save results
+                np.save(osp.join(video_output_dir, f"lma_features_id{_id}.npy"), lma_matrix)
+                np.save(osp.join(video_output_dir, f"lma_dict_id{_id}.npy"), lma_dict)
+
+        return True, video_path
+    except Exception as e:
+        return False, f"{video_path}: {str(e)}"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--video", type=str, required=True, help="Input video file")
-    parser.add_argument("--output_dir", type=str, default="output/wham_kineguard", help="Directory for output files")
-    parser.add_argument("--viz", action='store_true', help="Generate 3D visualization mp4 using WHAM renderer")
+    parser.add_argument("--video", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="output/wham_kineguard")
+    parser.add_argument("--viz", action='store_true')
     opts = parser.parse_args()
 
-    processor = KineGuardWHAMProcessor()
+    # Just call the worker function directly
+    success, message = process_single_video(
+        opts.video, 
+        opts.output_dir, 
+        visualize=opts.viz, 
+    )
     
-    # 1. Run WHAM to get all fragments
-    fragments, fps = processor.run_pipeline(opts.video, opts.output_dir, visualize=opts.viz)
-    
-    if fragments:
-        print("\n[+] WHAM Processing Complete. Starting LMA Integration...")
-        
-        for _id, data in fragments.items():
-            print(f"[*] Extracting LMA features for Fragment {_id}...")
-            
-            joints = data['joints_world'][:, :24, :]
-            verts_array = data['verts_world']
-            
-            # A. Calculate Volumes (ConvexHull) - Prerequisite for LMA 'Shape' features
-            volumes = []
-            last_v = 0.07 # Average human volume fallback
-            for verts in verts_array:
-                try:
-                    v = ConvexHull(verts).volume
-                    volumes.append(v)
-                    last_v = v
-                except Exception:
-                    volumes.append(last_v)
-            
-            # B. Generate the Identity floors (WHAM is already grounded)
-            floors = [IdentityFloor()] * len(joints)
-            
-            # C. Call the frozen LMA logic from your external script
-            lma_dict, lma_matrix = compute_lma_descriptor(
-                joints=joints, 
-                volumes=volumes, 
-                floors=floors, 
-                fps=fps, 
-                window_size=55
-            )
-            
-            # D. Save the final LMA feature vector (N_frames, 55)
-            out_lma_npy = osp.join(opts.output_dir, f"lma_features_id{_id}.npy")
-            np.save(out_lma_npy, lma_matrix)
-            print(f"    -> LMA Matrix saved: {out_lma_npy} | Shape: {lma_matrix.shape}")
-
-    print("\n[SUCCESS] Pipeline end-to-end complete.")
+    if success:
+        print(f"\n[SUCCESS] Pipeline complete for {message}")
+    else:
+        print(f"\n[ERROR] {message}")
