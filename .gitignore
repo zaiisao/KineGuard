@@ -9,3 +9,4 @@ internal_logic/
 *.wmv    
 
 *.pt
+__pycache__/
