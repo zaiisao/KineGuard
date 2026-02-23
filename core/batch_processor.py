@@ -3,6 +3,20 @@ import os
 import torch
 import argparse
 from glob import glob
+import multiprocessing.pool
+
+class NoDaemonProcess(mp.Process):
+    @property
+    def daemon(self):
+        return False
+    @daemon.setter
+    def daemon(self, value):
+        pass
+
+class NoDaemonPool(multiprocessing.pool.Pool):
+    @staticmethod
+    def Process(ctx, *args, **kwargs):
+        return NoDaemonProcess(*args, **kwargs)
 
 def init_worker(gpu_id_queue):
     """
@@ -49,7 +63,7 @@ def run_multiprocess_pipeline(input_folder, output_root, num_processes, visualiz
 
     # 3. INITIALIZE POOL
     # initializer=init_worker ensures the GPU is isolated BEFORE wham_inference is imported
-    with mp.Pool(processes=num_processes, 
+    with NoDaemonPool(processes=num_processes, 
                  initializer=init_worker, 
                  initargs=(gpu_id_queue,)) as pool:
         

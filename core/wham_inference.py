@@ -55,10 +55,10 @@ except ImportError:
     _run_global = False
 
 class KineGuardWHAMProcessor:
-    def __init__(self, cfg_path='configs/yamls/demo.yaml', device_id=0):
+    def __init__(self, cfg_path='configs/yamls/demo.yaml'):
         print("[*] Initializing KineGuard WHAM Processor...")
         self.cfg = get_cfg_defaults()
-        self.cfg.DEVICE = f'cuda:{device_id}' if torch.cuda.is_available() else 'cpu'
+        self.cfg.DEVICE = f'cuda:0' if torch.cuda.is_available() else 'cpu'
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         wham_root = os.path.join(script_dir, '..', 'external', 'WHAM')
@@ -249,7 +249,7 @@ def process_single_video(video_path, output_root, visualize=False):
     video_output_dir = os.path.join(output_root, video_name)
     
     # Pass the device_id here
-    processor = KineGuardWHAMProcessor(device_id=0)
+    processor = KineGuardWHAMProcessor()
     
     try:
         fragments, fps = processor.run_pipeline(video_path, video_output_dir, visualize=visualize)
