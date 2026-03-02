@@ -75,6 +75,9 @@ def run_multiprocess_pipeline(input_folder, output_root, num_processes, visualiz
 
     # 2. PREPARE GPU QUEUE
     num_gpus = torch.cuda.device_count()
+    if num_gpus == 0:
+        raise RuntimeError("No CUDA GPUs available. This pipeline requires at least one CUDA device.")
+
     manager = mp.Manager()
     gpu_id_queue = manager.Queue()
     

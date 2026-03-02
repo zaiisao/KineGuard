@@ -10,3 +10,4 @@ internal_logic/
 
 *.pt
 __pycache__/
+output/
