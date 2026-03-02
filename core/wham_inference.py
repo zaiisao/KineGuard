@@ -3,6 +3,8 @@ import os
 import numpy as np
 np.float = float
 
+sys.setrecursionlimit(5000)
+
 # 1. Get Absolute Path to the project root
 # This assumes wham_inference.py is in KineGuard/core/
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -97,7 +99,8 @@ class KineGuardWHAMProcessor:
                 if not flag: break
                 
                 self.detector.track(img, fps, length)
-                if slam is not None: slam.track()
+                if slam is not None:
+                    slam.track(video_path)
                 bar.next()
             cap.release()
 
@@ -250,47 +253,44 @@ def process_single_video(video_path, output_root, visualize=False):
     
     # Pass the device_id here
     processor = KineGuardWHAMProcessor()
-    
-    try:
-        fragments, fps = processor.run_pipeline(video_path, video_output_dir, visualize=visualize)
-        
-        if fragments:
-            print(f"\n[+] WHAM Complete for {video_name}. Starting LMA Integration...")
-            for _id, data in fragments.items():
-                print(f"[*] Extracting LMA features for Fragment {_id}...")
-                
-                joints = data['joints_world'][:, :24, :]
-                verts_array = data['verts_world']
-                
-                # A. Calculate Volumes
-                volumes = []
-                last_v = 0.07 
-                for verts in verts_array:
-                    try:
-                        v = ConvexHull(verts).volume
-                        volumes.append(v)
-                        last_v = v
-                    except Exception:
-                        volumes.append(last_v)
-                
-                floors = [IdentityFloor()] * len(joints)
-                
-                # B. Call LMA logic
-                lma_dict, lma_matrix = compute_lma_descriptor(
-                    joints=joints, 
-                    volumes=volumes, 
-                    floors=floors, 
-                    fps=fps, 
-                    window_size=55
-                )
-                
-                # C. Save results
-                np.save(osp.join(video_output_dir, f"lma_features_id{_id}.npy"), lma_matrix)
-                np.save(osp.join(video_output_dir, f"lma_dict_id{_id}.npy"), lma_dict)
 
-        return True, video_path
-    except Exception as e:
-        return False, f"{video_path}: {str(e)}"
+    fragments, fps = processor.run_pipeline(video_path, video_output_dir, visualize=visualize)
+    
+    if fragments:
+        print(f"\n[+] WHAM Complete for {video_name}. Starting LMA Integration...")
+        for _id, data in fragments.items():
+            print(f"[*] Extracting LMA features for Fragment {_id}...")
+            
+            joints = data['joints_world'][:, :24, :]
+            verts_array = data['verts_world']
+            
+            # A. Calculate Volumes
+            volumes = []
+            last_v = 0.07 
+            for verts in verts_array:
+                try:
+                    v = ConvexHull(verts).volume
+                    volumes.append(v)
+                    last_v = v
+                except Exception:
+                    volumes.append(last_v)
+            
+            floors = [IdentityFloor()] * len(joints)
+            
+            # B. Call LMA logic
+            lma_dict, lma_matrix = compute_lma_descriptor(
+                joints=joints, 
+                volumes=volumes, 
+                floors=floors, 
+                fps=fps, 
+                window_size=55
+            )
+            
+            # C. Save results
+            np.save(osp.join(video_output_dir, f"lma_features_id{_id}.npy"), lma_matrix)
+            np.save(osp.join(video_output_dir, f"lma_dict_id{_id}.npy"), lma_dict)
+
+    return True, video_path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
