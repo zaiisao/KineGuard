@@ -39,16 +39,38 @@ def run_multiprocess_pipeline(input_folder, output_root, num_processes, visualiz
 
     # 1. GATHER VIDEOS (Restored this part!)
     extensions = ['*.mp4', '*.avi', '*.mov', '*.mkv']
-    video_list = []
+    all_videos = []
     for ext in extensions:
-        video_list.extend(glob(os.path.join(input_folder, ext)))
-        video_list.extend(glob(os.path.join(input_folder, ext.upper())))
+        all_videos.extend(glob(os.path.join(input_folder, ext)))
+        all_videos.extend(glob(os.path.join(input_folder, ext.upper())))
 
-    if not video_list:
+    if not all_videos:
         print(f"[!] No videos found in {input_folder}")
         return
 
-    print(f"[*] Found {len(video_list)} videos. Starting pool with {num_processes} workers...")
+    video_list = []
+    for vid in all_videos:
+        # Get the folder name exactly as process_single_video defines it
+        video_name = os.path.splitext(os.path.basename(vid))[0]
+        video_output_dir = os.path.join(output_root, video_name)
+        
+        # Check if the folder exists and contains .npy files 
+        # (LMA features are the last thing generated)
+        if os.path.exists(video_output_dir):
+            lma_files = glob(os.path.join(video_output_dir, "lma_features_id*.npy"))
+            if len(lma_files) > 0:
+                continue # Skip this video, it's already done
+        
+        video_list.append(vid)
+
+    print(f"[*] Found {len(all_videos)} total videos.")
+    print(f"[*] {len(all_videos) - len(video_list)} already processed. {len(video_list)} remaining.")
+
+    if not video_list:
+        print("[*] All videos already processed. Exiting.")
+        return
+
+    print(f"[*] Starting pool with {num_processes} workers...")
     os.makedirs(output_root, exist_ok=True)
 
     # 2. PREPARE GPU QUEUE
