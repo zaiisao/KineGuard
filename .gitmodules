@@ -9,9 +9,11 @@
 [submodule "external/WHAM"]
 	path = external/WHAM
 	url = https://github.com/yohanshin/WHAM.git
+	ignore = untracked
 [submodule "external/dance-style-recognition"]
 	path = external/dance-style-recognition
 	url = https://github.com/zaiisao/dance-style-recognition.git
 [submodule "external/pytorch3d"]
 	path = external/pytorch3d
 	url = https://github.com/facebookresearch/pytorch3d.git
+	ignore = untracked
