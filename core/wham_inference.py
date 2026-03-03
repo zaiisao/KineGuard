@@ -95,7 +95,7 @@ class KineGuardWHAMProcessor:
             width, height = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             
             use_slam = use_slam and _run_global
-            slam = SLAMModel(video_path, output_pth, width, height, calib) if use_slam else None
+            slam = SLAMModel(video_path, output_pth, width, height, calib, buffer=16384) if use_slam else None
             
             bar = Bar('Preprocessing: Tracking and SLAM', fill='#', max=length)
             while cap.isOpened():
@@ -274,7 +274,12 @@ def process_single_video(video_path, output_root, visualize=False):
     # Pass the device_id here
     processor = KineGuardWHAMProcessor()
 
-    fragments, fps = processor.run_pipeline(video_path, video_output_dir, visualize=visualize)
+    try:
+        fragments, fps = processor.run_pipeline(video_path, video_output_dir, visualize=visualize)
+    except Exception as e:
+        print(f"⚠️ Video processing failed (Likely exceeded frame buffer): {video_path}")
+        print(f"Error: {e}")
+        return False, "Skipped due to internal WHAM/DPVO error"
 
     summary = {
         'video_path': video_path,
