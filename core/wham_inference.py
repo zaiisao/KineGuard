@@ -22,10 +22,7 @@ for p in [wham_root, dpvo_path, lma_path, vitpose_path]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-try:
-    from lib.models.preproc.slam import SLAMModel
-except ImportError:
-    pass
+from lib.models.preproc.slam import SLAMModel
 
 import cv2
 import torch
