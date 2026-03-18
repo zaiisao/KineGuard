@@ -1,6 +1,5 @@
 import cv2
-from KineGuard.core.wham_inference import KineGuardWHAMProcessor
-from internal_logic.queries import YT_QUERIES, TIKTOK_TARGETS
+from KineGuard.internal_logic.queries import YT_QUERIES, TIKTOK_TARGETS
 import yt_dlp
 import os
 import shutil
@@ -129,6 +128,12 @@ def check_single_person(video_path, min_duration=3):
     WHAM의 DetectionModel을 활용하여 비디오에서 1명만 검출되는지 확인.
     min_duration: 최소 검출되어야 하는 초(sec)
     """
+    try:
+        from KineGuard.core.wham_inference import KineGuardWHAMProcessor
+    except (ImportError, Exception) as e:
+        print(f"    [!] WHAM unavailable, skipping person check (keeping video): {e}")
+        return True
+
     try:
         processor = KineGuardWHAMProcessor()
         cap = cv2.VideoCapture(video_path)
