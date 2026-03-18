@@ -2,9 +2,11 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 1. Define paths (using Fragment 3 as our test subject)
-matrix_path = '/home/sogang/jaehoon/KineGuard/external/WHAM/output/wham_kineguard/lma_features_id3.npy'
-dict_path = '/home/sogang/jaehoon/KineGuard/external/WHAM/output/wham_kineguard/lma_dict_id3.npy'
+# 1. Define local repo paths (using Fragment 3 as our test subject)
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+wham_output_dir = os.path.join(repo_root, 'external', 'WHAM', 'output', 'wham_kineguard')
+matrix_path = os.path.join(wham_output_dir, 'lma_features_id3.npy')
+dict_path = os.path.join(wham_output_dir, 'lma_dict_id3.npy')
 
 # 2. Load the data
 print("[*] Loading LMA features...")
@@ -52,8 +54,7 @@ for i in range(num_features):
         ax.set_xticklabels([])
 
 # 5. Save the figure to a file
-# 5. Save the figure to a file
-output_image = '/home/sogang/jaehoon/KineGuard/external/WHAM/output/wham_kineguard/all_55_features_grid.png'
+output_image = os.path.join(wham_output_dir, 'all_55_features_grid.png')
 
 # --- ADD THIS LINE BEFORE SAVING ---
 os.makedirs(os.path.dirname(output_image), exist_ok=True)
