@@ -19,6 +19,7 @@ def _build_ydl_opts(output_folder, max_items=None):
         'ignoreerrors': True,
         'outtmpl': f'{output_folder}/%(id)s.%(ext)s',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'extractor_args': {'youtube': {'player_client': ['android']}},
     }
 
     if max_items is not None:
@@ -32,13 +33,19 @@ def _build_ydl_opts(output_folder, max_items=None):
 
 def run_youtube_recon(queries, results_per_query=50):
     output_base = os.path.abspath("kineguard_recon_yt")
-    
+
     if os.path.exists(output_base):
         shutil.rmtree(output_base)
     os.makedirs(output_base, exist_ok=True)
 
     print(f"[*] Starting YouTube Recon...")
     print(f"[*] Base directory: {output_base}")
+
+    from ultralytics import YOLO
+    bbox_model = YOLO(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', 'external', 'WHAM', 'checkpoints', 'yolo26x.pt'
+    ))
 
     for query in queries:
         clean_name = query.replace(" ", "_")
@@ -116,43 +123,46 @@ def run_youtube_recon(queries, results_per_query=50):
             if f.endswith('.mp4') or f.endswith('.mkv') or f.endswith('.webm'):
                 video_path = os.path.join(query_folder, f)
                 crop_center_square(video_path)
-                keep = check_single_person(video_path)
+                keep = check_single_person(video_path, bbox_model)
                 if not keep:
                     print(f"    [-] No single person detected, deleting: {video_path}")
                     os.remove(video_path)
                 else:
                     print(f"    [+] Single person detected, keeping: {video_path}")
 
-def check_single_person(video_path, min_duration=3):
+def check_single_person(video_path, bbox_model, min_ratio=0.6):
     """
-    WHAM의 DetectionModel을 활용하여 비디오에서 1명만 검출되는지 확인.
-    min_duration: 최소 검출되어야 하는 초(sec)
+    YOLO를 사용하여 비디오에서 대부분의 프레임에 1명만 있는지 확인.
+    min_ratio: 1명만 검출된 프레임의 최소 비율 (기본 60%)
     """
     try:
-        from KineGuard.core.wham_inference import KineGuardWHAMProcessor
-        processor = KineGuardWHAMProcessor()
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        cap.release()
-        detector = processor.detector
-        detected_frames = 0
-        for i in range(0, length, int(fps)):
-            cap = cv2.VideoCapture(video_path)
+        if fps <= 0 or length <= 0:
+            cap.release()
+            return False
+
+        step = max(1, int(fps))  # sample 1 frame per second
+        single_person_frames = 0
+        sampled = 0
+        for i in range(0, length, step):
             cap.set(cv2.CAP_PROP_POS_FRAMES, i)
             ret, frame = cap.read()
-            cap.release()
             if not ret:
                 continue
-            # detector.track()은 내부적으로 인물 검출
-            detector.track(frame, fps, length)
-            results = detector.process(fps)
-            if results and len(results) == 1:
-                detected_frames += 1
-        # 최소 min_duration 초 이상 1명 검출된 경우 True
-        return detected_frames >= min_duration
+            sampled += 1
+            results = bbox_model.predict(frame, classes=0, conf=0.4, save=False, verbose=False)
+            n_people = len(results[0].boxes)
+            if n_people == 1:
+                single_person_frames += 1
+        cap.release()
+
+        if sampled == 0:
+            return False
+        ratio = single_person_frames / sampled
+        print(f"        [i] Single-person frames: {single_person_frames}/{sampled} ({ratio:.0%})")
+        return ratio >= min_ratio
     except Exception as e:
         print(f"    [!] Error in person detection: {e}")
         return False
