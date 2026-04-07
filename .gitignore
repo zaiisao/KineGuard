@@ -6,10 +6,12 @@ internal_logic/
 *.mov
 *.mkv
 *.flv
-*.wmv    
+*.wmv
 
 *.pt
 __pycache__/
 output/
 kineguard_recon_yt/
 kineguard_recon_tiktok/
+screening_montages/
+*.ipynb_checkpoints/

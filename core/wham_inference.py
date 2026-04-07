@@ -181,7 +181,11 @@ class KineGuardWHAMProcessor:
                     results[_id]['verts'] = verts_cam + trans_cam[:, None, :] # Broadcast trans to (T, 1, 3)
                     
                     # 6. Store our LMA-specific parameters!
-                    results[_id]['joints_world'] = joints_world 
+                    results[_id]['joints_world'] = joints_world
+
+                    # 7. Original 2D keypoints from ViTPose (pixel coords, for overlay)
+                    kp2d = dataset.tracking_results[_id]['keypoints']  # (T, 17, 3) — x, y, conf
+                    results[_id]['keypoints_2d'] = kp2d
                     results[_id]['verts_world'] = verts_world
 
             if not results:
@@ -194,7 +198,7 @@ class KineGuardWHAMProcessor:
                 frames = data['frame_ids']
                 
                 # Optional: Skip noise/glitches (e.g., tracks shorter than 1 second)
-                if len(frames) < 30:
+                if len(frames) < 15:
                     print(f"[*] Skipping ID {_id} (Too short: {len(frames)} frames)")
                     continue
                     
@@ -205,7 +209,11 @@ class KineGuardWHAMProcessor:
                 np.savez(
                     out_npz,
                     joints=data['joints_world'],
+                    keypoints_2d=data['keypoints_2d'],
                     verts=data['verts_world'],
+                    pose_world=data['pose_world'],
+                    betas=data['betas'],
+                    trans_world=data['trans_world'],
                     frame_ids=frames,
                     fps=fps
                 )

@@ -1,17 +1,28 @@
 import cv2
+import subprocess
 from KineGuard.internal_logic.queries import YT_QUERIES, TIKTOK_TARGETS
 import yt_dlp
 import os
 import shutil
+
+VIDEO_EXTS = ('.mp4', '.mkv', '.webm')
 
 
 def _safe_name(text):
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text).strip("_") or "target"
 
 
+def _load_bbox_model():
+    from ultralytics import YOLO
+    return YOLO(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', 'external', 'WHAM', 'checkpoints', 'yolo26x.pt'
+    ))
+
+
 def _build_ydl_opts(output_folder, max_items=None):
     opts = {
-        'skip_download': False,  # 실제 비디오 다운로드
+        'skip_download': False,
         'writethumbnail': True,
         'writeinfojson': True,
         'quiet': True,
@@ -31,110 +42,35 @@ def _build_ydl_opts(output_folder, max_items=None):
 
     return opts
 
-def run_youtube_recon(queries, results_per_query=50):
-    output_base = os.path.abspath("kineguard_recon_yt")
 
-    if os.path.exists(output_base):
-        shutil.rmtree(output_base)
-    os.makedirs(output_base, exist_ok=True)
+def crop_center_square(video_path):
+    """가로 영상만 중앙 1:1 crop. 세로 영상은 skip."""
+    cap = cv2.VideoCapture(video_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
 
-    print(f"[*] Starting YouTube Recon...")
-    print(f"[*] Base directory: {output_base}")
+    if height >= width:
+        return
 
-    from ultralytics import YOLO
-    bbox_model = YOLO(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        '..', 'external', 'WHAM', 'checkpoints', 'yolo26x.pt'
-    ))
+    crop_size = height
+    x = (width - height) // 2
+    temp_path = video_path + ".cropped.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-filter:v", f"crop={crop_size}:{crop_size}:{x}:0",
+        "-c:a", "copy",
+        temp_path
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.path.exists(temp_path):
+        os.remove(video_path)
+        os.rename(temp_path, video_path)
 
-    for query in queries:
-        clean_name = query.replace(" ", "_")
-        query_folder = os.path.join(output_base, clean_name)
-        os.makedirs(query_folder, exist_ok=True)
-        print(f"\n[>>>] Processing Query: {query}")
-
-        # 1. 메타데이터만 먼저 추출 (다운로드 X)
-        ydl_opts_meta = _build_ydl_opts(query_folder)
-        ydl_opts_meta['skip_download'] = True
-        with yt_dlp.YoutubeDL(ydl_opts_meta) as ydl:
-            try:
-                result = ydl.extract_info(f"ytsearch{results_per_query}:{query}", download=False)
-                entries = (result or {}).get('entries') or []
-                print(f"    [i] Search returned {len(entries)} entries (metadata only)")
-            except Exception as e:
-                print(f"    [!] Error on query '{query}' (metadata): {e}")
-                continue
-
-        # 2. 세로 비디오 우선 선별
-        vertical_entries = []
-        horizontal_entries = []
-        for entry in entries:
-            # width/height 정보가 없으면 무시
-            width = entry.get('width')
-            height = entry.get('height')
-            if width and height:
-                if height >= width:
-                    vertical_entries.append(entry)
-                else:
-                    horizontal_entries.append(entry)
-            else:
-                # 정보 없으면 일단 horizontal로 분류
-                horizontal_entries.append(entry)
-
-        total = len(entries)
-        n_vertical = len(vertical_entries)
-        n_horizontal = len(horizontal_entries)
-        print(f"    [i] Vertical videos: {n_vertical}, Horizontal/Unknown: {n_horizontal}")
-
-        # 3. 다운로드할 엔트리 결정
-        download_entries = []
-        if total == 0:
-            print(f"    [!] No entries to download for query '{query}'")
-            continue
-        elif n_vertical / total >= 0.7 and n_vertical > 0:
-            # 세로 비디오가 70% 이상이면 세로 비디오만 다운로드
-            print(f"    [*] Downloading only vertical videos (>=70%)")
-            download_entries = vertical_entries
-        else:
-            # 세로 비디오 우선, 부족하면 horizontal에서 일부 추가
-            n_target = min(results_per_query, total)
-            n_vertical_target = int(n_target * 0.7)
-            n_horizontal_target = n_target - n_vertical_target
-            download_entries = vertical_entries[:n_vertical_target] + horizontal_entries[:n_horizontal_target]
-            print(f"    [*] Downloading {len(download_entries)} videos (vertical prioritized)")
-
-        # 4. 실제 다운로드 (entry별로 id로 다운로드)
-        ydl_opts = _build_ydl_opts(query_folder)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            for entry in download_entries:
-                try:
-                    # entry['webpage_url']가 있으면 그걸로 다운로드
-                    url = entry.get('webpage_url') or entry.get('url')
-                    if not url:
-                        continue
-                    ydl.download([url])
-                except Exception as e:
-                    print(f"    [!] Error downloading video: {e}")
-
-        files = os.listdir(query_folder)
-        print(f"    [+] Saved {len(files)} files to {clean_name}/")
-        # 비디오 crop 적용
-        for f in files:
-            if f.endswith('.mp4') or f.endswith('.mkv') or f.endswith('.webm'):
-                video_path = os.path.join(query_folder, f)
-                crop_center_square(video_path)
-                keep = check_single_person(video_path, bbox_model)
-                if not keep:
-                    print(f"    [-] No single person detected, deleting: {video_path}")
-                    os.remove(video_path)
-                else:
-                    print(f"    [+] Single person detected, keeping: {video_path}")
 
 def check_single_person(video_path, bbox_model, min_ratio=0.6):
-    """
-    YOLO를 사용하여 비디오에서 대부분의 프레임에 1명만 있는지 확인.
-    min_ratio: 1명만 검출된 프레임의 최소 비율 (기본 60%)
-    """
+    """YOLO로 비디오 프레임의 min_ratio 이상에서 1명만 검출되는지 확인."""
     try:
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -143,7 +79,7 @@ def check_single_person(video_path, bbox_model, min_ratio=0.6):
             cap.release()
             return False
 
-        step = max(1, int(fps))  # sample 1 frame per second
+        step = max(1, int(fps))
         single_person_frames = 0
         sampled = 0
         for i in range(0, length, step):
@@ -153,8 +89,7 @@ def check_single_person(video_path, bbox_model, min_ratio=0.6):
                 continue
             sampled += 1
             results = bbox_model.predict(frame, classes=0, conf=0.4, save=False, verbose=False)
-            n_people = len(results[0].boxes)
-            if n_people == 1:
+            if len(results[0].boxes) == 1:
                 single_person_frames += 1
         cap.release()
 
@@ -168,38 +103,74 @@ def check_single_person(video_path, bbox_model, min_ratio=0.6):
         return False
 
 
-def crop_center_square(video_path):
-    """
-    ffmpeg을 사용하여 비디오를 중앙 1:1 비율로 crop합니다.
-    원본 비디오를 덮어씌웁니다.
-    """
-    import subprocess
-    import cv2
-    cap = cv2.VideoCapture(video_path)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cap.release()
-    # 중앙 crop 영역 계산
-    if width > height:
-        crop_size = height
-        x = (width - height) // 2
-        y = 0
-    else:
-        crop_size = width
-        x = 0
-        y = (height - width) // 2
-    temp_path = video_path + ".cropped.mp4"
+def _is_vertical(video_path):
+    """ffprobe로 실제 비디오 해상도를 확인하여 세로 영상인지 판별."""
     cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-filter:v", f"crop={crop_size}:{crop_size}:{x}:{y}",
-        "-c:a", "copy",
-        temp_path
+        "ffprobe", "-v", "quiet",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=p=0", video_path,
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if os.path.exists(temp_path):
-        os.remove(video_path)
-        os.rename(temp_path, video_path)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        w, h = result.stdout.strip().split(",")
+        return int(h) >= int(w)
+    except (ValueError, IndexError):
+        return False
+
+
+def _filter_videos(folder, bbox_model, crop=True, vertical_only=False):
+    """Downloaded 비디오에 세로 필터 + crop + single-person 필터 적용. 탈락 시 삭제."""
+    for f in os.listdir(folder):
+        if not f.endswith(VIDEO_EXTS):
+            continue
+        video_path = os.path.join(folder, f)
+
+        if vertical_only and not _is_vertical(video_path):
+            print(f"    [-] Horizontal video, deleting: {f}")
+            os.remove(video_path)
+            continue
+
+        if crop:
+            crop_center_square(video_path)
+        keep = check_single_person(video_path, bbox_model)
+        if not keep:
+            print(f"    [-] No single person detected, deleting: {f}")
+            os.remove(video_path)
+        else:
+            print(f"    [+] Keeping: {f}")
+
+
+def run_youtube_recon(queries, results_per_query=50):
+    output_base = os.path.abspath("kineguard_recon_yt")
+
+    if os.path.exists(output_base):
+        shutil.rmtree(output_base)
+    os.makedirs(output_base, exist_ok=True)
+
+    print(f"[*] Starting YouTube Recon...")
+    print(f"[*] Base directory: {output_base}")
+
+    bbox_model = _load_bbox_model()
+
+    for query in queries:
+        clean_name = query.replace(" ", "_")
+        query_folder = os.path.join(output_base, clean_name)
+        os.makedirs(query_folder, exist_ok=True)
+        print(f"\n[>>>] Processing Query: {query}")
+
+        ydl_opts = _build_ydl_opts(query_folder)
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                ydl.download([f"ytsearch{results_per_query}:{query}"])
+            except Exception as e:
+                print(f"    [!] Error on query '{query}': {e}")
+                continue
+
+        n_files = len([f for f in os.listdir(query_folder) if f.endswith(VIDEO_EXTS)])
+        print(f"    [i] Downloaded {n_files} videos to {clean_name}/")
+        _filter_videos(query_folder, bbox_model, crop=True, vertical_only=True)
 
 
 def run_tiktok_recon(target_urls, max_items_per_target=50):
@@ -212,6 +183,8 @@ def run_tiktok_recon(target_urls, max_items_per_target=50):
     print(f"[*] Starting TikTok Recon...")
     print(f"[*] Base directory: {output_base}")
 
+    bbox_model = _load_bbox_model()
+
     for target in target_urls:
         clean_name = _safe_name(target)
         target_folder = os.path.join(output_base, clean_name)
@@ -223,17 +196,14 @@ def run_tiktok_recon(target_urls, max_items_per_target=50):
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                result = ydl.extract_info(target, download=True)
-                entries = []
-                if isinstance(result, dict):
-                    entries = result.get('entries') or []
-                count = len(entries) if entries else (1 if result else 0)
-                print(f"    [i] Extracted {count} item(s)")
-
-                files = os.listdir(target_folder)
-                print(f"    [+] Saved {len(files)} files to {clean_name}/")
+                ydl.download([target])
             except Exception as e:
                 print(f"    [!] Error on target '{target}': {e}")
+                continue
+
+        print(f"    [+] Saved {len(os.listdir(target_folder))} files to {clean_name}/")
+        _filter_videos(target_folder, bbox_model, crop=False)
+
 
 if __name__ == "__main__":
     run_youtube_recon(YT_QUERIES)
